@@ -63,7 +63,7 @@ __global__ void movingSumSharedMemStatic(int* vec, int* result_vec, int size)
 {
     // blockDim.x = number of threads per block
     int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    __shared__ int cachedVals[BLOCKSIZE + 2 * RADIUS -2];
+    __shared__ int cachedVals[BLOCKSIZE + 2 * RADIUS];
 
     if (threadIdx.x == 0) { // first thread also needs to copy the left edge
         for (int i = 0; i < RADIUS; i++) {
