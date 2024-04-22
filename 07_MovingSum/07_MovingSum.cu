@@ -61,7 +61,36 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 */
 __global__ void movingSumSharedMemStatic(int* vec, int* result_vec, int size)
 {
-    //ToDo
+    // blockDim.x = number of threads per block
+    int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    __shared__ int cachedVals[BLOCKSIZE + 2 * RADIUS -2];
+
+    if (threadIdx.x == 0) { // first thread also needs to copy the left edge
+        for (int i = 0; i < RADIUS; i++) {
+            int idx = globalIdx - RADIUS + i;
+            cachedVals[i] = idx >= 0 ? vec[idx] : 0;
+        }
+    }
+
+    cachedVals[threadIdx.x + RADIUS] = vec[globalIdx];
+
+    if (threadIdx.x == blockDim.x - 1) { // last thread also needs to copy the right edge
+        for (int i = 1; i <= RADIUS; i++) {
+            int idx = globalIdx + i;
+            if (idx < size)
+               cachedVals[BLOCKSIZE + RADIUS + i - 1] = vec[idx];
+        }
+    }
+
+    __syncthreads();
+
+    int result = 0;
+
+    for (int i = threadIdx.x; i <= threadIdx.x + 2 * RADIUS; i++) {
+        result += cachedVals[i];
+    }
+
+    result_vec[globalIdx] = result;
 }
 
 
@@ -78,7 +107,37 @@ __global__ void movingSumSharedMemStatic(int* vec, int* result_vec, int size)
 */
 __global__ void movingSumSharedMemDynamic(int* vec, int* result_vec, int size)
 {
-    //ToDo
+    // blockDim.x = number of threads per block
+    int globalIdx = blockIdx.x * blockDim.x + threadIdx.x;
+    extern __shared__ int shared[];
+    int* shmVec = (int*) shared;
+
+    if (threadIdx.x == 0) { // first thread also needs to copy the left edge
+        for (int i = 0; i < RADIUS; i++) {
+            int idx = globalIdx - RADIUS + i;
+            shmVec[i] = idx >= 0 ? vec[idx] : 0;
+        }
+    }
+
+    shmVec[threadIdx.x + RADIUS] = vec[globalIdx];
+
+    if (threadIdx.x == blockDim.x - 1) { // last thread also needs to copy the right edge
+        for (int i = 1; i <= RADIUS; i++) {
+            int idx = globalIdx + i;
+            if (idx < size)
+               shmVec[BLOCKSIZE + RADIUS + i - 1] = vec[idx];
+        }
+    }
+
+    __syncthreads();
+
+    int result = 0;
+
+    for (int i = threadIdx.x; i <= threadIdx.x + 2 * RADIUS; i++) {
+        result += shmVec[i];
+    }
+
+    result_vec[globalIdx] = result;
 }
 
 
@@ -93,7 +152,14 @@ __global__ void movingSumSharedMemDynamic(int* vec, int* result_vec, int size)
 */
 __global__ void movingSumAtomics(int* vec, int* result_vec, int size)
 {
-    //ToDo
+    int globalIdx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    int beg = globalIdx - RADIUS > 0 ? globalIdx - RADIUS : 0;
+    int end = globalIdx + RADIUS < WIDTH ? globalIdx + RADIUS : WIDTH - 1;
+
+    for (int i = beg; i <= end; i++) {
+        atomicAdd(result_vec + i, vec[globalIdx]);
+    }
 }
 
 
@@ -188,7 +254,7 @@ int main(void)
     int* hostVecOutputGPU4 = new int[WIDTH];
 
     for (int i = 0; i < WIDTH; i++) {
-        hostVecInput[i] = 1;
+        hostVecInput[i] = i % 123;
     }
 
     // Get the CPU result
@@ -213,11 +279,11 @@ int main(void)
     int nbr_blocks = ((WIDTH % BLOCKSIZE) != 0) ? (WIDTH / BLOCKSIZE + 1) : (WIDTH / BLOCKSIZE);
     movingSumGlobal << <nbr_blocks, BLOCKSIZE >> > (deviceVecInput, deviceVecOutput1, WIDTH);
     gpuErrCheck(cudaPeekAtLastError());
-    //ToDo: movingSumSharedMemStatic << <nbr_blocks, BLOCKSIZE >> > (deviceVecInput, deviceVecOutput2, WIDTH);
+    movingSumSharedMemStatic << <nbr_blocks, BLOCKSIZE >> > (deviceVecInput, deviceVecOutput2, WIDTH);
     gpuErrCheck(cudaPeekAtLastError());
-    //ToDo: movingSumSharedMemDynamic <<<nbr_blocks, BLOCKSIZE, ?????????? >>> (deviceVecInput, deviceVecOutput3, WIDTH);
+    movingSumSharedMemDynamic <<<nbr_blocks, BLOCKSIZE, (BLOCKSIZE + 2 * RADIUS) * sizeof(int) >>> (deviceVecInput, deviceVecOutput3, WIDTH);
     gpuErrCheck(cudaPeekAtLastError());
-    //ToDo: movingSumAtomics << <nbr_blocks, BLOCKSIZE >> > (deviceVecInput, deviceVecOutput4, WIDTH);
+    movingSumAtomics << <nbr_blocks, BLOCKSIZE >> > (deviceVecInput, deviceVecOutput4, WIDTH);
     gpuErrCheck(cudaPeekAtLastError());
 
     // Copy the result stored in device_y back to host_y
